@@ -1,78 +1,114 @@
 name: .NET Core Desktop Build and Release
 
+# 触发条件
 on:
   push:
     branches: [ "master" ]
     tags:
-      - 'v*'  # 触发版本标签时发布
+      - 'v*'  # 版本标签触发发布
   pull_request:
     branches: [ "master" ]
 
 jobs:
   build:
+    # 使用最新的Windows运行环境
+    runs-on: windows-latest
+    
+    # 构建矩阵，支持多配置
     strategy:
       matrix:
         configuration: [Debug, Release]
-    runs-on: windows-latest
     
     steps:
-    - name: Checkout
+    # 第1步：检出代码
+    - name: Checkout Repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        fetch-depth: 0  # 获取完整的Git历史
     
-    - name: Debug Repository Structure
-      run: |
-        Write-Host "GitHub Workspace: $env:GITHUB_WORKSPACE"
-        Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse | Select-Object FullName
-        Get-ChildItem
-    
-    - name: Install .NET Core
+    # 第2步：安装.NET Core SDK
+    - name: Setup .NET Core
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
     
-    - name: Setup MSBuild.exe
+    # 第3步：安装MSBuild
+    - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
     
-    - name: Restore the application
+    # 第4步：安装NuGet
+    - name: Setup NuGet
+      uses: nuget/setup-nuget@v1
+    
+    # 第5步：诊断仓库结构
+    - name: Diagnose Repository Structure
       run: |
+        Write-Host "GitHub Workspace: $env:GITHUB_WORKSPACE"
+        Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse | Select-Object FullName
+    
+    # 第6步：还原依赖包
+    - name: Restore NuGet Packages
+      run: |
+        # 动态查找解决方案文件
         $solutionFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*.sln" | Select-Object -First 1
         
         if ($solutionFile) {
           Write-Host "Found solution file: $($solutionFile.FullName)"
-          msbuild "$($solutionFile.FullName)" /t:Restore /p:Configuration=${{ matrix.configuration }}
+          
+          # 尝试使用多种方法还原
+          nuget restore "$($solutionFile.FullName)"
+          dotnet restore "$($solutionFile.FullName)" --verbosity normal
         } else {
           Write-Error "No solution file found in the repository"
           exit 1
         }
     
+    # 第7步：构建项目
     - name: Build Solution
       run: |
         $solutionFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*.sln" | Select-Object -First 1
         
         if ($solutionFile) {
-          msbuild "$($solutionFile.FullName)" /p:Configuration=${{ matrix.configuration }} /p:Platform="Any CPU"
+          msbuild "$($solutionFile.FullName)" `
+            /p:Configuration=${{ matrix.configuration }} `
+            /p:Platform="Any CPU" `
+            /p:PublishDir="${{ github.workspace }}\publish" `
+            /verbosity:normal
         } else {
           Write-Error "No solution file found in the repository"
           exit 1
         }
     
-    - name: Create Artifact Package
+    # 第8步：运行单元测试（可选）
+    - name: Run Unit Tests
       run: |
-        # 假设输出在 bin 目录下
-        $outputPath = Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath "bin\${{ matrix.configuration }}"
-        New-Item -ItemType Directory -Path "$env:GITHUB_WORKSPACE\publish" -Force
-        Copy-Item -Path "$outputPath\*" -Destination "$env:GITHUB_WORKSPACE\publish" -Recurse
+        $testProjects = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*Tests.csproj"
+        
+        foreach ($testProject in $testProjects) {
+          dotnet test "$($testProject.FullName)" `
+            --configuration ${{ matrix.configuration }} `
+            --verbosity normal
+        }
     
+    # 第9步：准备发布artifacts
+    - name: Prepare Artifacts
+      run: |
+        # 确保发布目录存在
+        New-Item -ItemType Directory -Path "${{ github.workspace }}\publish" -Force
+        
+        # 复制构建产物
+        $buildOutput = Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath "bin\${{ matrix.configuration }}"
+        Copy-Item -Path "$buildOutput\*" -Destination "${{ github.workspace }}\publish" -Recurse -Force
+    
+    # 第10步：上传构建产物
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
         name: desktop-app-${{ matrix.configuration }}
         path: ${{ github.workspace }}\publish
-
-    # 仅在推送标签时发布到 GitHub Release
-    - name: Create Release
+    
+    # 第11步：发布到GitHub Release（仅在打标签时）
+    - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v1
       with:
