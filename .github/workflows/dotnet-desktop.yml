@@ -39,7 +39,17 @@ jobs:
       run: dotnet test
 
     - name: Restore the application
-      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+      run: |
+        # 查找解决方案文件
+        $solutionFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*.sln" | Select-Object -First 1
+        
+        if ($solutionFile) {
+          Write-Host "Found solution file: $($solutionFile.FullName)"
+          msbuild "$($solutionFile.FullName)" /t:Restore /p:Configuration=${{ matrix.configuration }}
+        } else {
+          Write-Error "No solution file found in the repository"
+          exit 1
+        }
       env:
         Configuration: ${{ matrix.configuration }}
 
