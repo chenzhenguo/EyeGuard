@@ -64,20 +64,24 @@ jobs:
         }
     
     # 第7步：构建项目
+      timeout-minutes: 15
+
     - name: Build Solution
       run: |
         $solutionFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*.sln" | Select-Object -First 1
         
         if ($solutionFile) {
-          msbuild "$($solutionFile.FullName)" `
-            /p:Configuration=${{ matrix.configuration }} `
-            /p:Platform="Any CPU" `
-            /p:PublishDir="${{ github.workspace }}\publish" `
-            /verbosity:normal
+          # 使用 dotnet build 替代 msbuild
+          dotnet build "$($solutionFile.FullName)" `
+            --configuration ${{ matrix.configuration }} `
+            --no-restore `
+            --verbosity normal
         } else {
           Write-Error "No solution file found in the repository"
           exit 1
         }
+      # 增加超时时间
+      timeout-minutes: 20
     
     # 第8步：运行单元测试（可选）
     - name: Run Unit Tests
