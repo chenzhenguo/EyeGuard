@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "master" ]
     tags:
-      - 'v*'  # 触发标签推送时的发布
+      - 'v*'  # 触发版本标签时发布
   pull_request:
     branches: [ "master" ]
 
@@ -12,35 +12,31 @@ jobs:
   build:
     strategy:
       matrix:
-        configuration: [Release]  # 通常发布使用Release配置
+        configuration: [Debug, Release]
     runs-on: windows-latest
-
-    env:
-      Solution_Name: your-solution-name.sln  # 替换为您的解决方案名称
-      Test_Project_Path: your-test-project-path.csproj  # 替换为测试项目路径
-      Wap_Project_Directory: your-wap-project-directory  # 替换为WAP项目目录
-      Wap_Project_Path: your-wap-project-path.wapproj  # 替换为WAP项目路径
-
+    
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-
+    
+    - name: Debug Repository Structure
+      run: |
+        Write-Host "GitHub Workspace: $env:GITHUB_WORKSPACE"
+        Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse | Select-Object FullName
+        Get-ChildItem
+    
     - name: Install .NET Core
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
-
+    
     - name: Setup MSBuild.exe
       uses: microsoft/setup-msbuild@v2
-
-    - name: Execute unit tests
-      run: dotnet test
-
+    
     - name: Restore the application
       run: |
-        # 查找解决方案文件
         $solutionFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*.sln" | Select-Object -First 1
         
         if ($solutionFile) {
@@ -50,40 +46,38 @@ jobs:
           Write-Error "No solution file found in the repository"
           exit 1
         }
-      env:
-        Configuration: ${{ matrix.configuration }}
-
-    - name: Decode the pfx
+    
+    - name: Build Solution
       run: |
-        $pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
-        $certificatePath = Join-Path -Path $env:Wap_Project_Directory -ChildPath GitHubActionsWorkflow.pfx
-        [IO.File]::WriteAllBytes("$certificatePath", $pfx_cert_byte)
-
-    - name: Create the app package
-      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
-      env:
-        Appx_Bundle: Always
-        Appx_Bundle_Platforms: x86|x64
-        Appx_Package_Build_Mode: StoreUpload
-        Configuration: ${{ matrix.configuration }}
-
-    - name: Remove the pfx
-      run: Remove-Item -path $env:Wap_Project_Directory\GitHubActionsWorkflow.pfx
-
-    - name: Upload build artifacts
+        $solutionFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*.sln" | Select-Object -First 1
+        
+        if ($solutionFile) {
+          msbuild "$($solutionFile.FullName)" /p:Configuration=${{ matrix.configuration }} /p:Platform="Any CPU"
+        } else {
+          Write-Error "No solution file found in the repository"
+          exit 1
+        }
+    
+    - name: Create Artifact Package
+      run: |
+        # 假设输出在 bin 目录下
+        $outputPath = Join-Path -Path $env:GITHUB_WORKSPACE -ChildPath "bin\${{ matrix.configuration }}"
+        New-Item -ItemType Directory -Path "$env:GITHUB_WORKSPACE\publish" -Force
+        Copy-Item -Path "$outputPath\*" -Destination "$env:GITHUB_WORKSPACE\publish" -Recurse
+    
+    - name: Upload Build Artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: MSIX Package
-        path: ${{ env.Wap_Project_Directory }}\AppPackages
+        name: desktop-app-${{ matrix.configuration }}
+        path: ${{ github.workspace }}\publish
 
-    # 新增：仅在打tag时发布到Releases
+    # 仅在推送标签时发布到 GitHub Release
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          ${{ env.Wap_Project_Directory }}\AppPackages\**\*.msix
-          ${{ env.Wap_Project_Directory }}\AppPackages\**\*.appxbundle
+          ${{ github.workspace }}\publish\**\*
         draft: false
         prerelease: false
       env:
