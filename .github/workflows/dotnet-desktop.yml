@@ -1,72 +1,50 @@
 name: .NET Core Desktop
-
 on:
   push:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
-
 jobs:
   build:
     strategy:
       matrix:
         configuration: [Debug, Release]
-
     runs-on: windows-latest
-
-    env:
-      Solution_Name: src\MyWpfApp.sln
-      Test_Project_Path: src\MyWpfApp.Tests\MyWpfApp.Tests.csproj
-      Wap_Project_Directory: src\MyWpfApp.Package
-      Wap_Project_Path: src\MyWpfApp.Package\MyWpfApp.Package.wapproj
-
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+    
+    # Debug steps to verify repository structure
+    - name: Debug Repository Structure
+      run: |
+        # Print current workspace directory
+        Write-Host "GitHub Workspace: $env:GITHUB_WORKSPACE"
+        
+        # List all files and directories in the workspace
+        Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse | Select-Object FullName
+
+        # Print the current directory contents
+        Get-ChildItem
 
     - name: Install .NET Core
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
-
+    
     - name: Setup MSBuild.exe
       uses: microsoft/setup-msbuild@v2
-
-   # - name: Execute unit tests
-   #   run: dotnet test ${{ env.Test_Project_Path }}
-
+    
     - name: Restore the application
       run: |
-        # Print current directory to verify path
-        pwd
-        # List files to check solution file location
-        ls src
-        # Use absolute path or fully expanded env variable
-        msbuild "$env:GITHUB_WORKSPACE\$env:Solution_Name" /t:Restore /p:Configuration=$env:Configuration
-      env:
-        Configuration: ${{ matrix.configuration }}
-
-    - name: Decode the pfx
-      run: |
-        $pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
-        $certificatePath = Join-Path -Path $env:Wap_Project_Directory -ChildPath GitHubActionsWorkflow.pfx
-        [IO.File]::WriteAllBytes("$certificatePath", $pfx_cert_byte)
-
-    - name: Create the app package
-      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
-      env:
-        Appx_Bundle: Always
-        Appx_Bundle_Platforms: x86|x64
-        Appx_Package_Build_Mode: StoreUpload
-        Configuration: ${{ matrix.configuration }}
-
-    - name: Remove the pfx
-      run: Remove-Item -path $env:Wap_Project_Directory\GitHubActionsWorkflow.pfx
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: MSIX Package
-        path: ${{ env.Wap_Project_Directory }}\AppPackages
+        # Find the solution file dynamically
+        $solutionFile = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "*.sln" | Select-Object -First 1
+        
+        if ($solutionFile) {
+          Write-Host "Found solution file: $($solutionFile.FullName)"
+          msbuild "$($solutionFile.FullName)" /t:Restore /p:Configuration=${{ matrix.configuration }}
+        } else {
+          Write-Error "No solution file found in the repository"
+          exit 1
+        }
